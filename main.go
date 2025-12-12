@@ -145,14 +145,27 @@ func handleRequest(req *Request) *Response {
 						},
 					},
 					{
-						Name:        "ssh_copy",
-						Description: "Copy files to/from a remote host via SFTP",
+						Name:        "ssh_sftp",
+						Description: "Copy files via SFTP (requires SFTP subsystem)",
 						InputSchema: InputSchema{
 							Type: "object",
 							Properties: map[string]Property{
-								"host":      {Type: "string", Description: "SSH target in format user@host or user@host:port"},
-								"source":    {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
-								"dest":      {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
+								"host":   {Type: "string", Description: "SSH target in format user@host or user@host:port"},
+								"source": {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
+								"dest":   {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
+							},
+							Required: []string{"host", "source", "dest"},
+						},
+					},
+					{
+						Name:        "ssh_scp",
+						Description: "Copy files via SCP (works on most servers)",
+						InputSchema: InputSchema{
+							Type: "object",
+							Properties: map[string]Property{
+								"host":   {Type: "string", Description: "SSH target in format user@host or user@host:port"},
+								"source": {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
+								"dest":   {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
 							},
 							Required: []string{"host", "source", "dest"},
 						},
@@ -177,8 +190,10 @@ func handleToolCall(id any, params *CallToolParams) *Response {
 	switch params.Name {
 	case "ssh_exec":
 		return handleExec(id, params)
-	case "ssh_copy":
-		return handleCopy(id, params)
+	case "ssh_sftp":
+		return handleSFTP(id, params)
+	case "ssh_scp":
+		return handleSCP(id, params)
 	default:
 		return toolError(id, "Unknown tool")
 	}
@@ -200,7 +215,7 @@ func handleExec(id any, params *CallToolParams) *Response {
 	return toolSuccess(id, output)
 }
 
-func handleCopy(id any, params *CallToolParams) *Response {
+func handleSFTP(id any, params *CallToolParams) *Response {
 	host, _ := params.Arguments["host"].(string)
 	source, _ := params.Arguments["source"].(string)
 	dest, _ := params.Arguments["dest"].(string)
@@ -210,6 +225,23 @@ func handleCopy(id any, params *CallToolParams) *Response {
 	}
 
 	result, err := executeSFTP(host, source, dest)
+	if err != nil {
+		return toolError(id, err.Error())
+	}
+
+	return toolSuccess(id, result)
+}
+
+func handleSCP(id any, params *CallToolParams) *Response {
+	host, _ := params.Arguments["host"].(string)
+	source, _ := params.Arguments["source"].(string)
+	dest, _ := params.Arguments["dest"].(string)
+
+	if host == "" || source == "" || dest == "" {
+		return toolError(id, "Missing host, source, or dest")
+	}
+
+	result, err := executeSCP(host, source, dest)
 	if err != nil {
 		return toolError(id, err.Error())
 	}
@@ -349,6 +381,155 @@ func downloadFile(sftpClient *sftp.Client, remote, local string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("failed to copy: %w", err)
 	}
+
+	return fmt.Sprintf("Downloaded %d bytes to %s", n, local), nil
+}
+
+func executeSCP(host, source, dest string) (string, error) {
+	srcRemote := strings.HasPrefix(source, "remote:")
+	dstRemote := strings.HasPrefix(dest, "remote:")
+	source = strings.TrimPrefix(source, "remote:")
+	dest = strings.TrimPrefix(dest, "remote:")
+
+	if srcRemote && dstRemote {
+		return "", fmt.Errorf("both source and dest cannot be remote")
+	}
+	if !srcRemote && !dstRemote {
+		return "", fmt.Errorf("either source or dest must be remote")
+	}
+
+	user, addr := parseHost(host)
+
+	key, err := loadDefaultKey()
+	if err != nil {
+		return "", fmt.Errorf("failed to load SSH key: %w", err)
+	}
+
+	config := &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	client, err := ssh.Dial("tcp", addr, config)
+	if err != nil {
+		return "", fmt.Errorf("failed to connect: %w", err)
+	}
+	defer client.Close()
+
+	if srcRemote {
+		return scpDownload(client, source, dest)
+	}
+	return scpUpload(client, source, dest)
+}
+
+func scpUpload(client *ssh.Client, local, remote string) (string, error) {
+	f, err := os.Open(local)
+	if err != nil {
+		return "", fmt.Errorf("failed to open local file: %w", err)
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return "", fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+	defer session.Close()
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdin: %w", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdout: %w", err)
+	}
+
+	if err := session.Start("scp -t " + remote); err != nil {
+		return "", fmt.Errorf("failed to start scp: %w", err)
+	}
+
+	buf := make([]byte, 1)
+	stdout.Read(buf)
+
+	fmt.Fprintf(stdin, "C0644 %d %s\n", stat.Size(), filepath.Base(local))
+	stdout.Read(buf)
+
+	n, err := io.Copy(stdin, f)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy: %w", err)
+	}
+
+	fmt.Fprint(stdin, "\x00")
+	stdout.Read(buf)
+
+	stdin.Close()
+	session.Wait()
+
+	return fmt.Sprintf("Uploaded %d bytes to %s", n, remote), nil
+}
+
+func scpDownload(client *ssh.Client, remote, local string) (string, error) {
+	session, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to create session: %w", err)
+	}
+	defer session.Close()
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdin: %w", err)
+	}
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("failed to get stdout: %w", err)
+	}
+
+	if err := session.Start("scp -f " + remote); err != nil {
+		return "", fmt.Errorf("failed to start scp: %w", err)
+	}
+
+	fmt.Fprint(stdin, "\x00")
+
+	reader := bufio.NewReader(stdout)
+	header, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read header: %w", err)
+	}
+
+	var mode string
+	var size int64
+	var name string
+	_, err = fmt.Sscanf(header, "C%s %d %s", &mode, &size, &name)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse header: %w", err)
+	}
+
+	fmt.Fprint(stdin, "\x00")
+
+	f, err := os.Create(local)
+	if err != nil {
+		return "", fmt.Errorf("failed to create local file: %w", err)
+	}
+	defer f.Close()
+
+	n, err := io.CopyN(f, reader, size)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy: %w", err)
+	}
+
+	reader.ReadByte()
+	fmt.Fprint(stdin, "\x00")
+
+	stdin.Close()
+	session.Wait()
 
 	return fmt.Sprintf("Downloaded %d bytes to %s", n, local), nil
 }

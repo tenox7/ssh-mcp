@@ -35,9 +35,17 @@ Execute a command on a remote host.
 - `host` - SSH target in format `user@host` or `user@host:port`
 - `command` - Command to execute
 
-### ssh_copy
+### ssh_sftp
 
-Copy files to/from a remote host via SFTP.
+Copy files via SFTP (requires SFTP subsystem on server).
+
+- `host` - SSH target in format `user@host` or `user@host:port`
+- `source` - Source path (prefix with `remote:` for remote files)
+- `dest` - Destination path (prefix with `remote:` for remote files)
+
+### ssh_scp
+
+Copy files via SCP (works on most servers).
 
 - `host` - SSH target in format `user@host` or `user@host:port`
 - `source` - Source path (prefix with `remote:` for remote files)
@@ -46,10 +54,10 @@ Copy files to/from a remote host via SFTP.
 **Examples:**
 ```
 # Upload local file to remote
-ssh_copy user@example.com /local/file.txt remote:/remote/file.txt
+ssh_scp user@example.com /local/file.txt remote:/remote/file.txt
 
 # Download remote file to local
-ssh_copy user@example.com remote:/remote/file.txt /local/file.txt
+ssh_scp user@example.com remote:/remote/file.txt /local/file.txt
 ```
 
 ## Authentication
