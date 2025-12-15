@@ -1,22 +1,19 @@
 # ssh-mcp
 
-SSH MCP server. Execute commands on remote hosts via SSH.
-
-## Install
-
-```bash
-go install github.com/tenox7/ssh-mcp@latest
-```
+SSH MCP server that works. Execute commands on remote hosts via SSH. Also supports scp/sftp.
 
 ## Usage with Claude Code
+
+Run without installing
 
 ```bash
 claude mcp add ssh-mcp -- go run github.com/tenox7/ssh-mcp@latest
 ```
 
-Or if installed:
+Install
 
 ```bash
+go install github.com/tenox7/ssh-mcp@latest
 claude mcp add ssh-mcp $(go env GOPATH)/bin/ssh-mcp
 ```
 
@@ -24,40 +21,6 @@ claude mcp add ssh-mcp $(go env GOPATH)/bin/ssh-mcp
 
 ```bash
 npx @modelcontextprotocol/inspector -- go run github.com/tenox7/ssh-mcp@latest
-```
-
-## Tools
-
-### ssh_exec
-
-Execute a command on a remote host.
-
-- `host` - SSH target in format `user@host` or `user@host:port`
-- `command` - Command to execute
-
-### ssh_sftp
-
-Copy files via SFTP (requires SFTP subsystem on server).
-
-- `host` - SSH target in format `user@host` or `user@host:port`
-- `source` - Source path (prefix with `remote:` for remote files)
-- `dest` - Destination path (prefix with `remote:` for remote files)
-
-### ssh_scp
-
-Copy files via SCP (works on most servers).
-
-- `host` - SSH target in format `user@host` or `user@host:port`
-- `source` - Source path (prefix with `remote:` for remote files)
-- `dest` - Destination path (prefix with `remote:` for remote files)
-
-**Examples:**
-```
-# Upload local file to remote
-ssh_scp user@example.com /local/file.txt remote:/remote/file.txt
-
-# Download remote file to local
-ssh_scp user@example.com remote:/remote/file.txt /local/file.txt
 ```
 
 ## Authentication
