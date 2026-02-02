@@ -1,6 +1,6 @@
 # ssh-mcp
 
-SSH MCP server that works. Execute commands on remote hosts via SSH. Also supports scp/sftp.
+SSH MCP server that just works. Execute commands on remote hosts via SSH. Also supports scp/sftp.
 
 ## Usage with Claude Code
 
@@ -22,9 +22,3 @@ claude mcp add ssh-mcp $(go env GOPATH)/bin/ssh-mcp
 ```bash
 npx @modelcontextprotocol/inspector -- go run github.com/tenox7/ssh-mcp@latest
 ```
-
-## Authentication
-
-Supports two authentication methods:
-- **SSH Key** (default): Uses default SSH key from `~/.ssh/` (id_ed25519, id_rsa, or id_ecdsa)
-- **Password**: Specify password in the tool call using the `password` parameter

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/kevinburke/ssh_config"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -271,9 +272,9 @@ func toolSuccess(id any, msg string) *Response {
 	}
 }
 
-func getAuthMethods(password string) ([]ssh.AuthMethod, error) {
+func getAuthMethods(password, identityFile string) ([]ssh.AuthMethod, error) {
 	if password == "" {
-		key, err := loadDefaultKey()
+		key, err := loadKey(identityFile)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load SSH key: %w", err)
 		}
@@ -293,9 +294,9 @@ func getAuthMethods(password string) ([]ssh.AuthMethod, error) {
 }
 
 func connectSSH(host, password string) (*ssh.Client, error) {
-	user, addr := parseHost(host)
+	user, addr, identityFile := parseHost(host)
 
-	authMethods, err := getAuthMethods(password)
+	authMethods, err := getAuthMethods(password, identityFile)
 	if err != nil {
 		return nil, err
 	}
@@ -544,33 +545,67 @@ func scpDownload(client *ssh.Client, remote, local string) (string, error) {
 	return fmt.Sprintf("Downloaded %d bytes to %s", n, local), nil
 }
 
-func parseHost(host string) (user, addr string) {
+func parseHost(host string) (user, addr, identityFile string) {
+	alias := host
 	user = os.Getenv("USER")
-	addr = host
+	port := "22"
 
 	if at := strings.Index(host, "@"); at != -1 {
 		user = host[:at]
-		addr = host[at+1:]
+		alias = host[at+1:]
 	}
 
+	home, _ := os.UserHomeDir()
+	if home != "" {
+		configPath := filepath.Join(home, ".ssh", "config")
+		f, err := os.Open(configPath)
+		if err == nil {
+			defer f.Close()
+			cfg, err := ssh_config.Decode(f)
+			if err == nil {
+				if configUser, _ := cfg.Get(alias, "User"); configUser != "" {
+					user = configUser
+				}
+				hostname, _ := cfg.Get(alias, "HostName")
+				if hostname == "" {
+					hostname, _ = cfg.Get(alias, "Hostname")
+				}
+				if hostname != "" {
+					alias = hostname
+				}
+				if configPort, _ := cfg.Get(alias, "Port"); configPort != "" {
+					port = configPort
+				}
+				if identity, _ := cfg.Get(alias, "IdentityFile"); identity != "" {
+					identityFile = strings.Replace(identity, "~", home, 1)
+				}
+			}
+		}
+	}
+
+	addr = alias
 	if !strings.Contains(addr, ":") {
-		addr = addr + ":22"
+		addr = addr + ":" + port
 	}
 
-	return user, addr
+	return user, addr, identityFile
 }
 
-func loadDefaultKey() (ssh.Signer, error) {
+func loadKey(identityFile string) (ssh.Signer, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
 
-	keyFiles := []string{
+	keyFiles := []string{}
+	if identityFile != "" {
+		keyFiles = append(keyFiles, identityFile)
+	}
+	keyFiles = append(keyFiles,
 		filepath.Join(home, ".ssh", "id_ed25519"),
 		filepath.Join(home, ".ssh", "id_rsa"),
 		filepath.Join(home, ".ssh", "id_ecdsa"),
-	}
+	)
 
 	for _, keyFile := range keyFiles {
 		data, err := os.ReadFile(keyFile)
@@ -586,7 +621,7 @@ func loadDefaultKey() (ssh.Signer, error) {
 		return signer, nil
 	}
 
-	return nil, fmt.Errorf("no SSH key found in ~/.ssh/")
+	return nil, fmt.Errorf("no SSH key found")
 }
 
 func errorResponse(id any, code int, message string) *Response {
