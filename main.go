@@ -271,26 +271,33 @@ func toolSuccess(id any, msg string) *Response {
 	}
 }
 
-func executeSSH(host, command, password string) (string, error) {
-	user, addr := parseHost(host)
+func getAuthMethods(password string) ([]ssh.AuthMethod, error) {
+	if password == "" {
+		key, err := loadDefaultKey()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load SSH key: %w", err)
+		}
+		return []ssh.AuthMethod{ssh.PublicKeys(key)}, nil
+	}
 
-	var authMethods []ssh.AuthMethod
-
-	if password != "" {
-		authMethods = append(authMethods, ssh.Password(password))
-		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+	return []ssh.AuthMethod{
+		ssh.Password(password),
+		ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
 			answers := make([]string, len(questions))
 			for i := range answers {
 				answers[i] = password
 			}
 			return answers, nil
-		}))
-	} else {
-		key, err := loadDefaultKey()
-		if err != nil {
-			return "", fmt.Errorf("failed to load SSH key: %w", err)
-		}
-		authMethods = append(authMethods, ssh.PublicKeys(key))
+		}),
+	}, nil
+}
+
+func connectSSH(host, password string) (*ssh.Client, error) {
+	user, addr := parseHost(host)
+
+	authMethods, err := getAuthMethods(password)
+	if err != nil {
+		return nil, err
 	}
 
 	config := &ssh.ClientConfig{
@@ -301,7 +308,16 @@ func executeSSH(host, command, password string) (string, error) {
 
 	client, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
-		return "", fmt.Errorf("failed to connect: %w", err)
+		return nil, fmt.Errorf("failed to connect: %w", err)
+	}
+
+	return client, nil
+}
+
+func executeSSH(host, command, password string) (string, error) {
+	client, err := connectSSH(host, password)
+	if err != nil {
+		return "", err
 	}
 	defer client.Close()
 
@@ -320,45 +336,6 @@ func executeSSH(host, command, password string) (string, error) {
 }
 
 func executeSFTP(host, source, dest, password string) (string, error) {
-	user, addr := parseHost(host)
-
-	var authMethods []ssh.AuthMethod
-
-	if password != "" {
-		authMethods = append(authMethods, ssh.Password(password))
-		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
-			answers := make([]string, len(questions))
-			for i := range answers {
-				answers[i] = password
-			}
-			return answers, nil
-		}))
-	} else {
-		key, err := loadDefaultKey()
-		if err != nil {
-			return "", fmt.Errorf("failed to load SSH key: %w", err)
-		}
-		authMethods = append(authMethods, ssh.PublicKeys(key))
-	}
-
-	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	client, err := ssh.Dial("tcp", addr, config)
-	if err != nil {
-		return "", fmt.Errorf("failed to connect: %w", err)
-	}
-	defer client.Close()
-
-	sftpClient, err := sftp.NewClient(client)
-	if err != nil {
-		return "", fmt.Errorf("failed to create SFTP client: %w", err)
-	}
-	defer sftpClient.Close()
-
 	srcRemote := strings.HasPrefix(source, "remote:")
 	dstRemote := strings.HasPrefix(dest, "remote:")
 	source = strings.TrimPrefix(source, "remote:")
@@ -370,6 +347,18 @@ func executeSFTP(host, source, dest, password string) (string, error) {
 	if !srcRemote && !dstRemote {
 		return "", fmt.Errorf("either source or dest must be remote")
 	}
+
+	client, err := connectSSH(host, password)
+	if err != nil {
+		return "", err
+	}
+	defer client.Close()
+
+	sftpClient, err := sftp.NewClient(client)
+	if err != nil {
+		return "", fmt.Errorf("failed to create SFTP client: %w", err)
+	}
+	defer sftpClient.Close()
 
 	if srcRemote {
 		return downloadFile(sftpClient, source, dest)
@@ -432,36 +421,9 @@ func executeSCP(host, source, dest, password string) (string, error) {
 		return "", fmt.Errorf("either source or dest must be remote")
 	}
 
-	user, addr := parseHost(host)
-
-	var authMethods []ssh.AuthMethod
-
-	if password != "" {
-		authMethods = append(authMethods, ssh.Password(password))
-		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
-			answers := make([]string, len(questions))
-			for i := range answers {
-				answers[i] = password
-			}
-			return answers, nil
-		}))
-	} else {
-		key, err := loadDefaultKey()
-		if err != nil {
-			return "", fmt.Errorf("failed to load SSH key: %w", err)
-		}
-		authMethods = append(authMethods, ssh.PublicKeys(key))
-	}
-
-	config := &ssh.ClientConfig{
-		User:            user,
-		Auth:            authMethods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-	}
-
-	client, err := ssh.Dial("tcp", addr, config)
+	client, err := connectSSH(host, password)
 	if err != nil {
-		return "", fmt.Errorf("failed to connect: %w", err)
+		return "", err
 	}
 	defer client.Close()
 
