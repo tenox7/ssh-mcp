@@ -138,8 +138,9 @@ func handleRequest(req *Request) *Response {
 						InputSchema: InputSchema{
 							Type: "object",
 							Properties: map[string]Property{
-								"host":    {Type: "string", Description: "SSH target in format user@host or user@host:port"},
-								"command": {Type: "string", Description: "Command to execute"},
+								"host":     {Type: "string", Description: "SSH target in format user@host or user@host:port"},
+								"command":  {Type: "string", Description: "Command to execute"},
+								"password": {Type: "string", Description: "Password for SSH authentication (optional, uses SSH key if not provided)"},
 							},
 							Required: []string{"host", "command"},
 						},
@@ -150,9 +151,10 @@ func handleRequest(req *Request) *Response {
 						InputSchema: InputSchema{
 							Type: "object",
 							Properties: map[string]Property{
-								"host":   {Type: "string", Description: "SSH target in format user@host or user@host:port"},
-								"source": {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
-								"dest":   {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
+								"host":     {Type: "string", Description: "SSH target in format user@host or user@host:port"},
+								"source":   {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
+								"dest":     {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
+								"password": {Type: "string", Description: "Password for SSH authentication (optional, uses SSH key if not provided)"},
 							},
 							Required: []string{"host", "source", "dest"},
 						},
@@ -163,9 +165,10 @@ func handleRequest(req *Request) *Response {
 						InputSchema: InputSchema{
 							Type: "object",
 							Properties: map[string]Property{
-								"host":   {Type: "string", Description: "SSH target in format user@host or user@host:port"},
-								"source": {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
-								"dest":   {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
+								"host":     {Type: "string", Description: "SSH target in format user@host or user@host:port"},
+								"source":   {Type: "string", Description: "Source path (prefix with 'remote:' for remote files)"},
+								"dest":     {Type: "string", Description: "Destination path (prefix with 'remote:' for remote files)"},
+								"password": {Type: "string", Description: "Password for SSH authentication (optional, uses SSH key if not provided)"},
 							},
 							Required: []string{"host", "source", "dest"},
 						},
@@ -202,12 +205,13 @@ func handleToolCall(id any, params *CallToolParams) *Response {
 func handleExec(id any, params *CallToolParams) *Response {
 	host, _ := params.Arguments["host"].(string)
 	command, _ := params.Arguments["command"].(string)
+	password, _ := params.Arguments["password"].(string)
 
 	if host == "" || command == "" {
 		return toolError(id, "Missing host or command")
 	}
 
-	output, err := executeSSH(host, command)
+	output, err := executeSSH(host, command, password)
 	if err != nil {
 		return toolError(id, err.Error())
 	}
@@ -219,12 +223,13 @@ func handleSFTP(id any, params *CallToolParams) *Response {
 	host, _ := params.Arguments["host"].(string)
 	source, _ := params.Arguments["source"].(string)
 	dest, _ := params.Arguments["dest"].(string)
+	password, _ := params.Arguments["password"].(string)
 
 	if host == "" || source == "" || dest == "" {
 		return toolError(id, "Missing host, source, or dest")
 	}
 
-	result, err := executeSFTP(host, source, dest)
+	result, err := executeSFTP(host, source, dest, password)
 	if err != nil {
 		return toolError(id, err.Error())
 	}
@@ -236,12 +241,13 @@ func handleSCP(id any, params *CallToolParams) *Response {
 	host, _ := params.Arguments["host"].(string)
 	source, _ := params.Arguments["source"].(string)
 	dest, _ := params.Arguments["dest"].(string)
+	password, _ := params.Arguments["password"].(string)
 
 	if host == "" || source == "" || dest == "" {
 		return toolError(id, "Missing host, source, or dest")
 	}
 
-	result, err := executeSCP(host, source, dest)
+	result, err := executeSCP(host, source, dest, password)
 	if err != nil {
 		return toolError(id, err.Error())
 	}
@@ -265,17 +271,24 @@ func toolSuccess(id any, msg string) *Response {
 	}
 }
 
-func executeSSH(host, command string) (string, error) {
+func executeSSH(host, command, password string) (string, error) {
 	user, addr := parseHost(host)
 
-	key, err := loadDefaultKey()
-	if err != nil {
-		return "", fmt.Errorf("failed to load SSH key: %w", err)
+	var authMethods []ssh.AuthMethod
+
+	if password != "" {
+		authMethods = append(authMethods, ssh.Password(password))
+	} else {
+		key, err := loadDefaultKey()
+		if err != nil {
+			return "", fmt.Errorf("failed to load SSH key: %w", err)
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(key))
 	}
 
 	config := &ssh.ClientConfig{
 		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
@@ -299,17 +312,24 @@ func executeSSH(host, command string) (string, error) {
 	return string(output), nil
 }
 
-func executeSFTP(host, source, dest string) (string, error) {
+func executeSFTP(host, source, dest, password string) (string, error) {
 	user, addr := parseHost(host)
 
-	key, err := loadDefaultKey()
-	if err != nil {
-		return "", fmt.Errorf("failed to load SSH key: %w", err)
+	var authMethods []ssh.AuthMethod
+
+	if password != "" {
+		authMethods = append(authMethods, ssh.Password(password))
+	} else {
+		key, err := loadDefaultKey()
+		if err != nil {
+			return "", fmt.Errorf("failed to load SSH key: %w", err)
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(key))
 	}
 
 	config := &ssh.ClientConfig{
 		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 
@@ -385,7 +405,7 @@ func downloadFile(sftpClient *sftp.Client, remote, local string) (string, error)
 	return fmt.Sprintf("Downloaded %d bytes to %s", n, local), nil
 }
 
-func executeSCP(host, source, dest string) (string, error) {
+func executeSCP(host, source, dest, password string) (string, error) {
 	srcRemote := strings.HasPrefix(source, "remote:")
 	dstRemote := strings.HasPrefix(dest, "remote:")
 	source = strings.TrimPrefix(source, "remote:")
@@ -400,14 +420,21 @@ func executeSCP(host, source, dest string) (string, error) {
 
 	user, addr := parseHost(host)
 
-	key, err := loadDefaultKey()
-	if err != nil {
-		return "", fmt.Errorf("failed to load SSH key: %w", err)
+	var authMethods []ssh.AuthMethod
+
+	if password != "" {
+		authMethods = append(authMethods, ssh.Password(password))
+	} else {
+		key, err := loadDefaultKey()
+		if err != nil {
+			return "", fmt.Errorf("failed to load SSH key: %w", err)
+		}
+		authMethods = append(authMethods, ssh.PublicKeys(key))
 	}
 
 	config := &ssh.ClientConfig{
 		User:            user,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(key)},
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	}
 

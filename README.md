@@ -25,4 +25,6 @@ npx @modelcontextprotocol/inspector -- go run github.com/tenox7/ssh-mcp@latest
 
 ## Authentication
 
-Uses default SSH key from `~/.ssh/` (id_ed25519, id_rsa, or id_ecdsa).
+Supports two authentication methods:
+- **SSH Key** (default): Uses default SSH key from `~/.ssh/` (id_ed25519, id_rsa, or id_ecdsa)
+- **Password**: Specify password in the tool call using the `password` parameter
