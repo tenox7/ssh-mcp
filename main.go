@@ -278,6 +278,13 @@ func executeSSH(host, command, password string) (string, error) {
 
 	if password != "" {
 		authMethods = append(authMethods, ssh.Password(password))
+		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+			answers := make([]string, len(questions))
+			for i := range answers {
+				answers[i] = password
+			}
+			return answers, nil
+		}))
 	} else {
 		key, err := loadDefaultKey()
 		if err != nil {
@@ -319,6 +326,13 @@ func executeSFTP(host, source, dest, password string) (string, error) {
 
 	if password != "" {
 		authMethods = append(authMethods, ssh.Password(password))
+		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+			answers := make([]string, len(questions))
+			for i := range answers {
+				answers[i] = password
+			}
+			return answers, nil
+		}))
 	} else {
 		key, err := loadDefaultKey()
 		if err != nil {
@@ -424,6 +438,13 @@ func executeSCP(host, source, dest, password string) (string, error) {
 
 	if password != "" {
 		authMethods = append(authMethods, ssh.Password(password))
+		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+			answers := make([]string, len(questions))
+			for i := range answers {
+				answers[i] = password
+			}
+			return answers, nil
+		}))
 	} else {
 		key, err := loadDefaultKey()
 		if err != nil {
