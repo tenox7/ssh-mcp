@@ -7,7 +7,7 @@ SSH MCP server that just works. Execute commands on remote hosts via SSH. Also s
 Run without installing
 
 ```bash
-claude mcp add ssh-mcp -- go run github.com/tenox7/ssh-mcp@latest
+claude mcp add -s user ssh-mcp -- go run github.com/tenox7/ssh-mcp@latest
 ```
 
 Install
